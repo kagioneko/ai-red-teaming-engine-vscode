@@ -1,0 +1,104 @@
+{
+  "name": "ai-red-teaming-engine",
+  "displayName": "AI Red Teaming Engine",
+  "description": "AI/LLM コードのセキュリティ脆弱性をリアルタイム検出",
+  "version": "0.1.0",
+  "publisher": "emilia-lab",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Linters", "Other"],
+  "keywords": ["security", "ai", "llm", "red-team", "vulnerability"],
+  "icon": "icon.png",
+  "activationEvents": [
+    "onLanguage:python",
+    "onLanguage:javascript",
+    "onLanguage:typescript",
+    "onLanguage:go",
+    "onLanguage:java"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "redteam.scanFile",
+        "title": "RedTeam: ファイルをスキャン",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "redteam.scanWorkspace",
+        "title": "RedTeam: ワークスペース全体をスキャン",
+        "icon": "$(search-view-icon)"
+      },
+      {
+        "command": "redteam.clearDiagnostics",
+        "title": "RedTeam: 診断結果をクリア"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "redteam.scanFile",
+          "group": "navigation",
+          "when": "editorIsOpen"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "redteam.scanFile",
+          "group": "redteam",
+          "when": "editorIsOpen"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "AI Red Teaming Engine",
+      "properties": {
+        "redteam.enginePath": {
+          "type": "string",
+          "default": "",
+          "description": "engine.py のパス（空の場合は PATH から自動検出）"
+        },
+        "redteam.mode": {
+          "type": "string",
+          "enum": ["safe", "deep", "agent-audit"],
+          "default": "deep",
+          "description": "スキャンモード"
+        },
+        "redteam.backend": {
+          "type": "string",
+          "enum": ["auto", "claude", "gemini", "api"],
+          "default": "auto",
+          "description": "LLM バックエンド"
+        },
+        "redteam.scanOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "ファイル保存時に自動スキャン"
+        },
+        "redteam.minSeverityToShow": {
+          "type": "string",
+          "enum": ["Info", "Low", "Medium", "High", "Critical"],
+          "default": "Medium",
+          "description": "表示する最低重大度"
+        },
+        "redteam.timeoutSeconds": {
+          "type": "number",
+          "default": 120,
+          "description": "スキャンタイムアウト（秒）"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.22.0"
+  }
+}
