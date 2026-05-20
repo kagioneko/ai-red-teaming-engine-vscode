@@ -567,13 +567,14 @@ async function checkTurn(): Promise<void> {
 
   outputChannel.appendLine(`[NeuroState] ターン ${neuroSession!.turnCount + 1} を評価中...`);
 
-  const score = await fetchTurnScore(enginePath, turnText, cfg.backend === "auto" ? "claude" : cfg.backend, outputChannel);
+  const { score, neurostate } = await fetchTurnScore(enginePath, turnText, cfg.backend === "auto" ? "claude" : cfg.backend, outputChannel);
   if (score < 0) {
     vscode.window.showErrorMessage("NekoGuard: スコアの取得に失敗しました。出力パネルを確認してください。");
     return;
   }
 
   const result = neuroSession!.update(score);
+  result.neurostate = neurostate;
   const stats = neuroSession!.getStats();
   outputChannel.appendLine(
     `[NeuroState] ターン ${result.turnIndex}: ` +

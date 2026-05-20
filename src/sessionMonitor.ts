@@ -20,6 +20,16 @@ import * as vscode from "vscode";
 
 export type AlertType = "none" | "sudden" | "slow_burn";
 
+export interface NeuroStateVector {
+  desire: number;
+  sorrow: number;
+  calm: number;
+  openness: number;
+  guilt: number;
+  euphoria: number;
+  corruption: number;
+}
+
 export interface DetectionResult {
   alert: boolean;
   alertType: AlertType;
@@ -29,6 +39,7 @@ export interface DetectionResult {
   lTrigger: number;
   tDefault: number;
   turnIndex: number;
+  neurostate?: NeuroStateVector;
   message: string;
 }
 
@@ -119,12 +130,17 @@ function round(n: number): number {
  * engine.py --session-score でターンのリスクスコアを取得する。
  * 戻り値: 0.0-1.0 のスコア（エラー時は -1）
  */
+export interface TurnScoreResult {
+  score: number;
+  neurostate?: NeuroStateVector;
+}
+
 export async function fetchTurnScore(
   enginePath: string,
   turnText: string,
   backend: string,
   outputChannel: vscode.OutputChannel,
-): Promise<number> {
+): Promise<TurnScoreResult> {
   return new Promise((resolve) => {
     const args = [
       enginePath,
@@ -141,15 +157,18 @@ export async function fetchTurnScore(
     });
     proc.on("error", (err) => {
       outputChannel.appendLine(`[NeuroState] エンジン起動失敗: ${err.message}`);
-      resolve(-1);
+      resolve({ score: -1 });
     });
     proc.on("close", () => {
       try {
-        const json = JSON.parse(stdout.trim());
-        resolve(typeof json.score === "number" ? json.score : -1);
+        const parsed = JSON.parse(stdout.trim());
+        resolve({
+          score: typeof parsed.score === "number" ? parsed.score : -1,
+          neurostate: parsed.neurostate as NeuroStateVector | undefined,
+        });
       } catch {
         outputChannel.appendLine(`[NeuroState] スコアのパース失敗: ${stdout}`);
-        resolve(-1);
+        resolve({ score: -1 });
       }
     });
   });
@@ -169,10 +188,17 @@ export async function showAlertToast(
       ? "突発型インジェクション"
       : "じわじわ型（マルチターン）インジェクション";
 
+  const ns = result.neurostate;
+  const nsDetail = ns
+    ? `\ncorruption=${ns.corruption.toFixed(2)}  calm=${ns.calm.toFixed(2)}  ` +
+      `openness=${ns.openness.toFixed(2)}  guilt=${ns.guilt.toFixed(2)}  euphoria=${ns.euphoria.toFixed(2)}`
+    : "";
+
   const detail =
     `${typeLabel}の兆候を検知しました。\n` +
-    `score=${result.vCurrent.toFixed(2)}  A_short=${result.aShort.toFixed(2)}  ` +
-    `L_trigger=${result.lTrigger.toFixed(2)}  T_default=${result.tDefault.toFixed(2)}`;
+    `V=${result.vCurrent.toFixed(2)}  A_short=${result.aShort.toFixed(2)}  ` +
+    `L_trigger=${result.lTrigger.toFixed(2)}  T_default=${result.tDefault.toFixed(2)}` +
+    nsDetail;
 
   const choice = await vscode.window.showWarningMessage(
     `⚠️ NekoGuard: 文脈の異常な歪みを検知しました`,
