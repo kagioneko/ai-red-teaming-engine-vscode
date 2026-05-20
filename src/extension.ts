@@ -74,6 +74,8 @@ const scanningFiles = new Set<string>();
 
 // NeuroState セッション（グローバル1セッション）
 let neuroSession: NeuroStateSession | null = null;
+// セッション中にcheckTurnを実行した＝AI会話確認済みフラグ
+let sessionVerified = false;
 
 // ─── 活性化 ───────────────────────────────────────────────────────────────
 
@@ -106,6 +108,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("redteam.startSessionMonitor", startSessionMonitor),
     vscode.commands.registerCommand("redteam.checkTurn", checkTurn),
     vscode.commands.registerCommand("redteam.resetSession", resetSession),
+    vscode.commands.registerCommand("redteam.preCommitCheck", preCommitCheck),
 
     // 保存時スキャン
     vscode.workspace.onDidSaveTextDocument((doc) => {
@@ -172,6 +175,7 @@ async function scanDocument(doc: vscode.TextDocument): Promise<void> {
     applyDiagnostics(doc.uri, report);
     updateStatusBarFromReport(report);
     showScanSummary(report, path.basename(filePath));
+    await promptSessionCheckIfNeeded(report);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     outputChannel.appendLine(`[RedTeam] エラー: ${msg}`);
@@ -519,6 +523,7 @@ function getSessionConfig() {
 async function startSessionMonitor(): Promise<void> {
   const sessionCfg = getSessionConfig();
   neuroSession = new NeuroStateSession(sessionCfg.tDefault, sessionCfg.windowN);
+  sessionVerified = false;
   outputChannel.appendLine(
     `[NeuroState] セッション監視を開始しました ` +
     `(T_default=${sessionCfg.tDefault}, window=${sessionCfg.windowN}ターン)`,
@@ -578,6 +583,7 @@ async function checkTurn(): Promise<void> {
   );
 
   if (!result.alert) {
+    sessionVerified = true;
     vscode.window.showInformationMessage(
       `✅ NekoGuard: ターン ${result.turnIndex} — 異常なし (score=${result.vCurrent.toFixed(2)})`,
     );
@@ -586,8 +592,11 @@ async function checkTurn(): Promise<void> {
 
   // アラート発生
   const action = await showAlertToast(result);
-  if (action === "reset") {
+  if (action === "ignore") {
+    sessionVerified = true; // ユーザーが意図的にIgnoreした = 確認済みとみなす
+  } else if (action === "reset") {
     neuroSession!.reset();
+    sessionVerified = false;
     outputChannel.appendLine("[NeuroState] セッションをリセットしました");
     vscode.window.showInformationMessage("NekoGuard: 文脈をリセットしました。");
   } else if (action === "audit") {
@@ -604,9 +613,81 @@ async function checkTurn(): Promise<void> {
 async function resetSession(): Promise<void> {
   if (neuroSession) {
     neuroSession.reset();
+    sessionVerified = false;
     outputChannel.appendLine("[NeuroState] セッションをリセットしました");
     vscode.window.showInformationMessage("NekoGuard: セッションをリセットしました。");
   } else {
     vscode.window.showInformationMessage("NekoGuard: アクティブなセッションがありません。");
+  }
+}
+
+// ─── コミット前チェック ────────────────────────────────────────────────────
+
+async function preCommitCheck(): Promise<void> {
+  // 確認済みなら即OK
+  if (sessionVerified) {
+    const stats = neuroSession?.getStats();
+    const detail = stats
+      ? `${stats.turns}ターン確認済み — 最終 A_long=${stats.aLong}, A_short=${stats.aShort}`
+      : "セッション確認済み";
+    vscode.window.showInformationMessage(
+      `✅ NekoGuard: AI会話の確認済みです。コミットしてOK。`,
+      { detail },
+    );
+    outputChannel.appendLine(`[NeuroState] コミット前チェック: 確認済み (${detail})`);
+    return;
+  }
+
+  // 未確認の場合 → サマリーを出してチェックを促す
+  const stats = neuroSession?.getStats();
+  const sessionInfo = stats
+    ? `現在のセッション: ${stats.turns}ターン / A_short=${stats.aShort} / L_trigger=${stats.lTrigger}`
+    : "セッション監視未開始";
+
+  const choice = await vscode.window.showWarningMessage(
+    `⚠️ NekoGuard: AI会話がまだ確認されていません`,
+    {
+      modal: false,
+      detail: `${sessionInfo}\nコミット前にAI会話のインジェクションチェックを推奨します。`,
+    },
+    "今すぐ確認する",
+    "確認不要（スキップ）",
+  );
+
+  if (choice === "今すぐ確認する") {
+    await checkTurn();
+  } else if (choice === "確認不要（スキップ）") {
+    sessionVerified = true;
+    outputChannel.appendLine("[NeuroState] コミット前チェック: ユーザーがスキップを選択");
+    vscode.window.showInformationMessage("NekoGuard: スキップしました。コミットを続行してください。");
+  }
+}
+
+// ─── スキャン完了後の会話確認プロンプト ───────────────────────────────────
+
+async function promptSessionCheckIfNeeded(report: RedTeamReport): Promise<void> {
+  const cfg = vscode.workspace.getConfiguration(EXTENSION_ID);
+  if (!cfg.get<boolean>("session.promptAfterCleanScan", true)) return;
+  if (sessionVerified) return;
+
+  const total = report.summary?.total_issues ?? 0;
+  const critical = report.summary?.critical ?? 0;
+  // コードに重大な問題がある場合はコード側を優先（会話チェックの前に直してもらう）
+  if (critical > 0 || total > 5) return;
+
+  const choice = await vscode.window.showInformationMessage(
+    `✅ コードは問題なし。AIとの会話も確認しますか？`,
+    "確認する",
+    "今回はスキップ",
+    "今後表示しない",
+  );
+
+  if (choice === "確認する") {
+    if (!neuroSession) await startSessionMonitor();
+    await checkTurn();
+  } else if (choice === "今後表示しない") {
+    await cfg.update("session.promptAfterCleanScan", false, vscode.ConfigurationTarget.Global);
+  } else if (choice === "今回はスキップ") {
+    sessionVerified = true;
   }
 }

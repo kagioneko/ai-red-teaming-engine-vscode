@@ -45,6 +45,11 @@
       {
         "command": "redteam.resetSession",
         "title": "NekoGuard: セッションをリセット"
+      },
+      {
+        "command": "redteam.preCommitCheck",
+        "title": "NekoGuard: コミット前チェック",
+        "icon": "$(git-commit)"
       }
     ],
     "menus": {
@@ -112,6 +117,11 @@
           "minimum": 1,
           "maximum": 20,
           "description": "NeuroState 短期ウィンドウサイズ（ターン数）"
+        },
+        "redteam.session.promptAfterCleanScan": {
+          "type": "boolean",
+          "default": true,
+          "description": "コードスキャンが問題なし時にAI会話確認を促す（オフにすると表示しない）"
         }
       }
     }
