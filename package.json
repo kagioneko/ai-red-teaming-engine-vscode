@@ -31,6 +31,20 @@
       {
         "command": "redteam.clearDiagnostics",
         "title": "RedTeam: 診断結果をクリア"
+      },
+      {
+        "command": "redteam.startSessionMonitor",
+        "title": "NekoGuard: セッション監視を開始",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "redteam.checkTurn",
+        "title": "NekoGuard: ターンを検査（選択テキストまたは入力）",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "redteam.resetSession",
+        "title": "NekoGuard: セッションをリセット"
       }
     ],
     "menus": {
@@ -84,6 +98,20 @@
           "type": "number",
           "default": 120,
           "description": "スキャンタイムアウト（秒）"
+        },
+        "redteam.session.tDefault": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "NeuroState 絶対防衛ライン T_default（0.0-1.0）"
+        },
+        "redteam.session.windowN": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "NeuroState 短期ウィンドウサイズ（ターン数）"
         }
       }
     }

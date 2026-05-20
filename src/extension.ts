@@ -12,6 +12,11 @@ import * as vscode from "vscode";
 import * as cp from "child_process";
 import * as path from "path";
 import * as fs from "fs";
+import {
+  NeuroStateSession,
+  fetchTurnScore,
+  showAlertToast,
+} from "./sessionMonitor";
 
 // ─── 型定義 ────────────────────────────────────────────────────────────────
 
@@ -67,6 +72,9 @@ let outputChannel: vscode.OutputChannel;
 // スキャン中のファイルを追跡（多重実行防止）
 const scanningFiles = new Set<string>();
 
+// NeuroState セッション（グローバル1セッション）
+let neuroSession: NeuroStateSession | null = null;
+
 // ─── 活性化 ───────────────────────────────────────────────────────────────
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -93,6 +101,11 @@ export function activate(context: vscode.ExtensionContext): void {
       setStatusIdle();
       outputChannel.appendLine("[RedTeam] 診断結果をクリアしました");
     }),
+
+    // ─── NeuroState セッション監視コマンド ────────────────────────────────
+    vscode.commands.registerCommand("redteam.startSessionMonitor", startSessionMonitor),
+    vscode.commands.registerCommand("redteam.checkTurn", checkTurn),
+    vscode.commands.registerCommand("redteam.resetSession", resetSession),
 
     // 保存時スキャン
     vscode.workspace.onDidSaveTextDocument((doc) => {
@@ -491,4 +504,109 @@ function resolveEnginePath(configPath: string): string | null {
 
 function isSupportedLanguage(languageId: string): boolean {
   return ["python", "javascript", "typescript", "go", "java"].includes(languageId);
+}
+
+// ─── NeuroState セッション監視 ─────────────────────────────────────────────
+
+function getSessionConfig() {
+  const cfg = vscode.workspace.getConfiguration(EXTENSION_ID);
+  return {
+    tDefault: cfg.get<number>("session.tDefault") ?? 0.7,
+    windowN: cfg.get<number>("session.windowN") ?? 5,
+  };
+}
+
+async function startSessionMonitor(): Promise<void> {
+  const sessionCfg = getSessionConfig();
+  neuroSession = new NeuroStateSession(sessionCfg.tDefault, sessionCfg.windowN);
+  outputChannel.appendLine(
+    `[NeuroState] セッション監視を開始しました ` +
+    `(T_default=${sessionCfg.tDefault}, window=${sessionCfg.windowN}ターン)`,
+  );
+  vscode.window.showInformationMessage(
+    `NekoGuard: セッション監視を開始しました。` +
+    `"RedTeam: ターンを検査" でAI会話のターンを監視できます。`,
+  );
+}
+
+async function checkTurn(): Promise<void> {
+  if (!neuroSession) {
+    const start = await vscode.window.showWarningMessage(
+      "NekoGuard: セッション監視が開始されていません。開始しますか？",
+      "開始する",
+      "キャンセル",
+    );
+    if (start !== "開始する") return;
+    await startSessionMonitor();
+  }
+
+  const cfg = getConfig();
+  const enginePath = resolveEnginePath(cfg.enginePath);
+  if (!enginePath) {
+    showEngineNotFoundError();
+    return;
+  }
+
+  // 選択テキスト or 入力ボックスからターンテキストを取得
+  const editor = vscode.window.activeTextEditor;
+  let turnText = editor?.document.getText(editor.selection)?.trim() ?? "";
+
+  if (!turnText) {
+    const input = await vscode.window.showInputBox({
+      prompt: "監視するAI会話のターンを貼り付けてください",
+      placeHolder: "ユーザー入力 or AIレスポンスのテキスト...",
+    });
+    if (!input) return;
+    turnText = input;
+  }
+
+  outputChannel.appendLine(`[NeuroState] ターン ${neuroSession!.turnCount + 1} を評価中...`);
+
+  const score = await fetchTurnScore(enginePath, turnText, cfg.backend === "auto" ? "claude" : cfg.backend, outputChannel);
+  if (score < 0) {
+    vscode.window.showErrorMessage("NekoGuard: スコアの取得に失敗しました。出力パネルを確認してください。");
+    return;
+  }
+
+  const result = neuroSession!.update(score);
+  const stats = neuroSession!.getStats();
+  outputChannel.appendLine(
+    `[NeuroState] ターン ${result.turnIndex}: ` +
+    `V=${result.vCurrent.toFixed(2)}, A_long=${stats.aLong}, ` +
+    `A_short=${stats.aShort}, L_trigger=${stats.lTrigger}` +
+    (result.alert ? ` ⚠️ ${result.alertType}` : " ✅"),
+  );
+
+  if (!result.alert) {
+    vscode.window.showInformationMessage(
+      `✅ NekoGuard: ターン ${result.turnIndex} — 異常なし (score=${result.vCurrent.toFixed(2)})`,
+    );
+    return;
+  }
+
+  // アラート発生
+  const action = await showAlertToast(result);
+  if (action === "reset") {
+    neuroSession!.reset();
+    outputChannel.appendLine("[NeuroState] セッションをリセットしました");
+    vscode.window.showInformationMessage("NekoGuard: 文脈をリセットしました。");
+  } else if (action === "audit") {
+    outputChannel.appendLine("[NeuroState] Opus で精密監査を開始します...");
+    const doc = editor?.document;
+    if (doc) {
+      await scanDocument(doc);
+    } else {
+      vscode.window.showInformationMessage("NekoGuard: 監査対象のファイルを開いてから実行してください。");
+    }
+  }
+}
+
+async function resetSession(): Promise<void> {
+  if (neuroSession) {
+    neuroSession.reset();
+    outputChannel.appendLine("[NeuroState] セッションをリセットしました");
+    vscode.window.showInformationMessage("NekoGuard: セッションをリセットしました。");
+  } else {
+    vscode.window.showInformationMessage("NekoGuard: アクティブなセッションがありません。");
+  }
 }
