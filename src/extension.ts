@@ -109,6 +109,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("redteam.checkTurn", checkTurn),
     vscode.commands.registerCommand("redteam.resetSession", resetSession),
     vscode.commands.registerCommand("redteam.preCommitCheck", preCommitCheck),
+    vscode.commands.registerCommand("redteam.investigateIssue", investigateIssue),
 
     // 保存時スキャン
     vscode.workspace.onDidSaveTextDocument((doc) => {
@@ -322,8 +323,9 @@ function applyDiagnostics(uri: vscode.Uri, report: RedTeamReport): void {
     const sev = issue.severity ?? "Info";
     if ((SEV_ORDER[sev] ?? 99) > minSevOrder) continue;
 
+    const conf = issue.confidence ?? "Medium";
     const range = buildRange(issue);
-    const diag = new vscode.Diagnostic(range, buildMessage(issue), toDiagnosticSeverity(sev));
+    const diag = new vscode.Diagnostic(range, buildMessage(issue), toDiagnosticSeverity(sev, conf));
     diag.source = DIAGNOSTIC_SOURCE;
     diag.code = issue.category ?? sev;
 
@@ -331,6 +333,11 @@ function applyDiagnostics(uri: vscode.Uri, report: RedTeamReport): void {
     const fix = issue.minimal_fix ?? issue.hardening_suggestion ?? issue.fix_suggestion;
     if (fix) {
       diag.message += `\n💡 ${fix}`;
+    }
+
+    // Low confidence には「詳しく調べる」タグを付与
+    if (conf === "Low") {
+      diag.tags = [vscode.DiagnosticTag.Unnecessary];
     }
 
     diagnostics.push(diag);
@@ -351,13 +358,31 @@ function buildRange(issue: RedTeamIssue): vscode.Range {
   );
 }
 
+const CONFIDENCE_PREFIX: Record<string, string> = {
+  High:   "🚨 確認済み脆弱性",
+  Medium: "⚠️ 要確認",
+  Low:    "💬 参考情報",
+};
+
+const CONFIDENCE_NOTE: Record<string, string> = {
+  Low: "用途によっては安全な可能性があります。詳細調査が必要な場合は「詳しく調べる」を実行してください。",
+};
+
 function buildMessage(issue: RedTeamIssue): string {
   const title = issue.title ?? "(タイトルなし)";
+  const conf = issue.confidence ?? "Medium";
+  const prefix = CONFIDENCE_PREFIX[conf] ?? "";
   const desc = issue.why_this_matters ?? issue.description ?? "";
-  return desc ? `${title}\n${desc}` : title;
+  const note = CONFIDENCE_NOTE[conf] ?? "";
+  const parts = [`${prefix} — ${title}`];
+  if (desc) parts.push(desc);
+  if (note) parts.push(`ℹ️ ${note}`);
+  return parts.join("\n");
 }
 
-function toDiagnosticSeverity(sev: string): vscode.DiagnosticSeverity {
+function toDiagnosticSeverity(sev: string, confidence?: string): vscode.DiagnosticSeverity {
+  // Low confidence は severity に関わらず Information 扱い
+  if (confidence === "Low") return vscode.DiagnosticSeverity.Information;
   switch (sev) {
     case "Critical":
     case "High":
@@ -623,6 +648,34 @@ async function resetSession(): Promise<void> {
 }
 
 // ─── コミット前チェック ────────────────────────────────────────────────────
+
+async function investigateIssue(): Promise<void> {
+  const cfg = getConfig();
+  const enginePath = cfg.enginePath;
+
+  // カテゴリ入力
+  const category = await vscode.window.showInputBox({
+    prompt: "詳しく調べるカテゴリを入力してください",
+    placeHolder: "例: Input Validation, Infra, Injection",
+  });
+  if (!category) return;
+
+  outputChannel.show();
+  outputChannel.appendLine(`\n[RedTeam] 詳細調査: ${category} ...`);
+
+  try {
+    const result = await execEngine(
+      enginePath,
+      ["--investigate", category, "--backend", cfg.backend === "auto" ? "claude" : cfg.backend],
+      120_000,
+    );
+    outputChannel.appendLine(result);
+    vscode.window.showInformationMessage(`🔍 詳細調査完了: ${category} — 出力パネルを確認してください`);
+  } catch (err) {
+    outputChannel.appendLine(`[エラー] ${err}`);
+    vscode.window.showErrorMessage(`詳細調査に失敗しました: ${err}`);
+  }
+}
 
 async function preCommitCheck(): Promise<void> {
   // 確認済みなら即OK

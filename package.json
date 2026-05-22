@@ -50,6 +50,11 @@
         "command": "redteam.preCommitCheck",
         "title": "NekoGuard: コミット前チェック",
         "icon": "$(git-commit)"
+      },
+      {
+        "command": "redteam.investigateIssue",
+        "title": "RedTeam: 詳しく調べる（Low confidence）",
+        "icon": "$(search)"
       }
     ],
     "menus": {
