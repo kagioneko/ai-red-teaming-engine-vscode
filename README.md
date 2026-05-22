@@ -82,17 +82,39 @@ Add to your `settings.json`:
 | `minSeverityToShow` | Minimum severity to show: `Critical` / `High` / `Medium` / `Low` / `Info` | `Medium` |
 | `timeoutSeconds` | Scan timeout in seconds | `120` |
 
+#### NekoGuard Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `session.tDefault` | NeuroState alert threshold (0.0–1.0) | `0.7` |
+| `session.windowN` | Short-term window size (turns) | `5` |
+| `session.promptAfterCleanScan` | Prompt to check AI conversation after a clean code scan | `true` |
+
 ---
 
 ## Commands
 
+Access via `Ctrl+Shift+P` (macOS: `Cmd+Shift+P`).
+
+### Code Scanning
+
 | Command | Description |
 |---------|-------------|
 | `RedTeam: ファイルをスキャン` | Scan the active file |
-| `RedTeam: ワークスペース全体をスキャン` | Scan the entire workspace |
+| `RedTeam: ワークスペース全体をスキャン` | Scan all files in the workspace |
 | `RedTeam: 診断結果をクリア` | Clear all diagnostics |
+| `RedTeam: 詳しく調べる` | Deep-dive a Low-confidence finding by category |
 
-Access via `Ctrl+Shift+P` (macOS: `Cmd+Shift+P`).
+### NekoGuard — AI Session Monitor
+
+Monitors your AI chat conversations turn-by-turn for prompt injection attacks using [NeuroState](https://zenodo.org/records/19734147).
+
+| Command | Description |
+|---------|-------------|
+| `NekoGuard: セッション監視を開始` | Start monitoring a new AI chat session |
+| `NekoGuard: ターンを検査` | Evaluate the selected text (or paste a turn) for anomalies |
+| `NekoGuard: セッションをリセット` | Reset the current session state |
+| `NekoGuard: コミット前チェック` | Verify AI conversation was checked before committing |
 
 ---
 

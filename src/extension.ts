@@ -651,17 +651,51 @@ async function resetSession(): Promise<void> {
 
 async function investigateIssue(): Promise<void> {
   const cfg = getConfig();
-  const enginePath = cfg.enginePath;
+  const enginePath = resolveEnginePath(cfg.enginePath);
+  if (!enginePath) {
+    showEngineNotFoundError();
+    return;
+  }
 
-  // カテゴリ入力
-  const category = await vscode.window.showInputBox({
-    prompt: "詳しく調べるカテゴリを入力してください",
-    placeHolder: "例: Input Validation, Infra, Injection",
-  });
+  // 現在開いているファイルの診断からカテゴリを候補として提示
+  const editor = vscode.window.activeTextEditor;
+  const existingCategories: string[] = [];
+  if (editor) {
+    const diags = diagnosticCollection.get(editor.document.uri) ?? [];
+    for (const d of diags) {
+      const cat = typeof d.code === "string" ? d.code : String(d.code ?? "");
+      if (cat && !existingCategories.includes(cat)) existingCategories.push(cat);
+    }
+  }
+
+  let category: string | undefined;
+  if (existingCategories.length > 0) {
+    // 既存の診断カテゴリをクイックピックで選択
+    const picks = existingCategories.map((c) => ({ label: c }));
+    picks.push({ label: "その他（手動入力）" });
+    const picked = await vscode.window.showQuickPick(picks, {
+      placeHolder: "詳しく調べるカテゴリを選択してください",
+    });
+    if (!picked) return;
+    if (picked.label === "その他（手動入力）") {
+      category = await vscode.window.showInputBox({
+        prompt: "カテゴリを入力してください",
+        placeHolder: "例: Input Validation, Injection, Infra",
+      });
+    } else {
+      category = picked.label;
+    }
+  } else {
+    category = await vscode.window.showInputBox({
+      prompt: "詳しく調べるカテゴリを入力してください",
+      placeHolder: "例: Input Validation, Injection, Infra",
+    });
+  }
   if (!category) return;
 
   outputChannel.show();
   outputChannel.appendLine(`\n[RedTeam] 詳細調査: ${category} ...`);
+  setStatusScanning(`調査中: ${category}`);
 
   try {
     const result = await execEngine(
@@ -670,9 +704,16 @@ async function investigateIssue(): Promise<void> {
       120_000,
     );
     outputChannel.appendLine(result);
-    vscode.window.showInformationMessage(`🔍 詳細調査完了: ${category} — 出力パネルを確認してください`);
+    setStatusIdle();
+    vscode.window.showInformationMessage(
+      `🔍 詳細調査完了: ${category}`,
+      "出力パネルを開く",
+    ).then((choice) => {
+      if (choice) outputChannel.show();
+    });
   } catch (err) {
     outputChannel.appendLine(`[エラー] ${err}`);
+    setStatusError();
     vscode.window.showErrorMessage(`詳細調査に失敗しました: ${err}`);
   }
 }
