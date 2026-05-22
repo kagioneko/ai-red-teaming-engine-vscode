@@ -286,9 +286,8 @@ function execEngine(enginePath: string, args: string[], timeoutMs: number): Prom
     proc.on("error", (err) => reject(new Error(`プロセス起動失敗: ${err.message}`)));
 
     proc.on("close", (code) => {
-      // exit code 1 は --fail-on による正常終了の場合もある
       if (code !== null && code > 1) {
-        reject(new Error(`engine.py が終了コード ${code} で失敗\n${stderr}`));
+        reject(classifyEngineError(stderr));
         return;
       }
       resolve(stdout);
@@ -296,12 +295,34 @@ function execEngine(enginePath: string, args: string[], timeoutMs: number): Prom
   });
 }
 
+function classifyEngineError(stderr: string): Error {
+  if (stderr.includes("ANTHROPIC_API_KEY")) {
+    return new Error(
+      "ANTHROPIC_API_KEY が設定されていません。\n\n" +
+      "以下のいずれかを設定してください:\n" +
+      "  • ターミナルで: export ANTHROPIC_API_KEY=sk-ant-...\n" +
+      "  • 設定で backend を 'claude'（Claude CLI）に変更する"
+    );
+  }
+  if (stderr.includes("ModuleNotFoundError") || stderr.includes("No module named")) {
+    const mod = stderr.match(/No module named '([^']+)'/)?.[1] ?? "依存パッケージ";
+    return new Error(
+      `Python パッケージ '${mod}' が見つかりません。\n` +
+      `pip install ${mod} を実行してください。`
+    );
+  }
+  if (stderr.includes("python3: can't open file") || stderr.includes("No such file")) {
+    return new Error("engine.py が見つかりません。設定の 'redteam.enginePath' を確認してください。");
+  }
+  return new Error(`engine.py の実行に失敗しました。出力パネルで詳細を確認してください。\n${stderr.slice(0, 300)}`);
+}
+
 function parseOutput(raw: string): RedTeamReport {
-  // JSON 部分を抜き出す（ログ出力が混在する場合を考慮）
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
     outputChannel.appendLine(`[RedTeam] 出力全体:\n${raw}`);
-    throw new Error("JSON 出力が見つかりませんでした");
+    // stderr に原因が出ている場合はそちらを優先
+    throw new Error("スキャン結果の取得に失敗しました。出力パネルを確認してください。");
   }
   try {
     return JSON.parse(jsonMatch[0]) as RedTeamReport;
